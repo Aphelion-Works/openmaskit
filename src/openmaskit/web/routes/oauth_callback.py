@@ -1,14 +1,8 @@
 """OAuth callback handler.
 
 Receives the redirect from the authorization server after the user approves
-the install (or reauthorize). Three modes share this one endpoint:
-
-- ``broker``: hosted broker swaps the code via ``auth.maskitmcp.com``.
-- ``byo`` / ``dcr``: OpenMaskit posts to the AS's ``token_endpoint`` directly
-  with the PKCE verifier stashed at install-prep time.
-
-State validation (existence, expiry, handle match) is identical across modes;
-only the code-exchange step branches.
+a bring-your-own or direct-registration install. OpenMaskit posts the code
+to that server's token endpoint with the PKCE verifier stashed at install time.
 """
 
 from __future__ import annotations
@@ -63,7 +57,6 @@ async def oauth_callback(request: Request):
     state = request.app.state.proxy_state
     store = state.store
     manager = state.target_manager
-    backend_client = request.app.state.backend_client
     oauth_states = request.app.state.oauth_states
 
     handle = request.path_params["handle"]
@@ -116,16 +109,7 @@ async def oauth_callback(request: Request):
 
     oauth_states.pop(csrf_state, None)
 
-    mode = state_data.get("mode", "broker")
-    if mode == "broker":
-        return await _finish_broker_install(
-            handle=handle,
-            state_data=state_data,
-            code=code,
-            backend_client=backend_client,
-            manager=manager,
-            store=store,
-        )
+    mode = state_data.get("mode")
     if mode in ("byo", "dcr"):
         return await _finish_local_install(
             handle=handle,
@@ -136,93 +120,11 @@ async def oauth_callback(request: Request):
             proxy_state=state,
         )
 
-    logger.error(f"Unknown OAuth mode {mode!r} for {handle}")
+    logger.error("Refusing remote OAuth brokerage for %s", handle)
     return RedirectResponse(
-        f"/marketplace?error=invalid_mode&message=Unknown OAuth mode {mode}",
+        "/marketplace?error=local_oauth_required&message=OAuth%20stays%20on%20this%20Mac",
         status_code=302,
     )
-
-
-async def _finish_broker_install(
-    *, handle, state_data, code, backend_client, manager, store
-):
-    server_uuid = state_data["server_id"]
-    try:
-        token_data = await backend_client.exchange_code(
-            server_id=server_uuid, code=code
-        )
-        logger.info(f"Successfully exchanged code for token: {handle}")
-    except Exception as e:
-        logger.error(f"Token exchange failed for {handle}: {e}")
-        return RedirectResponse(
-            f"/marketplace?error=token_exchange&message={str(e)}", status_code=302
-        )
-
-    token_path = _oauth_token_path(manager, handle)
-    token_path.parent.mkdir(parents=True, exist_ok=True)
-
-    token_file_data = {
-        "tokens": {
-            "access_token": token_data["access_token"],
-            "token_type": token_data.get("token_type", "Bearer"),
-            "scope": token_data.get("scope"),
-            "expires_in": _normalize_expires_in(token_data.get("expires_in")),
-            "refresh_token": token_data.get("refresh_token"),
-            "created_at": time.time(),
-        },
-        # No client_info — backend manages OAuth client credentials.
-    }
-    write_token_file(token_path, token_file_data)
-    logger.info(f"Encrypted token stored at {token_path}")
-
-    try:
-        server_info = await backend_client.get_server_info(server_uuid)
-        if not server_info:
-            logger.error(f"Server info not found for UUID {server_uuid}")
-            return RedirectResponse(
-                "/marketplace?error=not_found&message=Server not found in backend",
-                status_code=302,
-            )
-        if not server_info.get("mcp_host"):
-            logger.error(f"No mcp_host returned for {handle}")
-            return RedirectResponse(
-                "/marketplace?error=no_mcp_host&message=Server configuration incomplete",
-                status_code=302,
-            )
-    except Exception as e:
-        logger.error(f"Failed to fetch server info for {handle}: {e}")
-        return RedirectResponse(
-            f"/marketplace?error=backend_error&message={str(e)}",
-            status_code=302,
-        )
-
-    from openmaskit.web.routes.marketplace import _build_config_from_server_info
-
-    try:
-        config = _build_config_from_server_info(server_info)
-        icon_url = server_info.get("icon_url")
-        await store.install_server(
-            handle,
-            server_info["name"],
-            source="marketplace",
-            backend_id=server_uuid,
-            config=config,
-            icon_url=icon_url,
-        )
-        await manager.add_target(handle, config)
-        logger.info(f"Successfully installed and connected: {handle}")
-        return RedirectResponse(
-            f"/marketplace?success=true&installed={handle}", status_code=302
-        )
-    except Exception as e:
-        logger.exception(f"Failed to connect {handle}")
-        if hasattr(e, "exceptions") and e.exceptions:
-            error_msg = str(e.exceptions[0])
-        else:
-            error_msg = str(e)
-        return RedirectResponse(
-            f"/marketplace?error=connection_failed&message={error_msg}", status_code=302
-        )
 
 
 async def _finish_local_install(

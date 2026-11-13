@@ -607,7 +607,7 @@ class TestRefreshBackendOAuthToken:
         assert client.calls == []  # Backend must not be called
 
     @pytest.mark.anyio
-    async def test_backend_managed_calls_backend_and_persists(self, tmp_path):
+    async def test_remote_broker_refresh_is_not_called(self, tmp_path):
         _write_token_file(tmp_path, "github", {
             "tokens": {"access_token": "old", "refresh_token": "rt-old"},
         })
@@ -621,14 +621,8 @@ class TestRefreshBackendOAuthToken:
             "github", str(tmp_path / "store.db"), client
         )
 
-        assert result == "new-token"
-        assert client.calls == [("github", "rt-old")]
-
-        # New tokens persisted with created_at stamp
-        saved = read_token_file(tmp_path / "oauth" / "github.json")
-        assert saved["tokens"]["access_token"] == "new-token"
-        assert saved["tokens"]["refresh_token"] == "rt-new"
-        assert "created_at" in saved["tokens"]
+        assert result is None
+        assert client.calls == []
 
     @pytest.mark.anyio
     async def test_no_refresh_token_returns_none(self, tmp_path):
@@ -645,7 +639,7 @@ class TestRefreshBackendOAuthToken:
         assert client.calls == []
 
     @pytest.mark.anyio
-    async def test_backend_returns_none_propagates(self, tmp_path):
+    async def test_remote_broker_refresh_stays_local(self, tmp_path):
         _write_token_file(tmp_path, "github", {
             "tokens": {"access_token": "old", "refresh_token": "rt"},
         })
@@ -656,7 +650,7 @@ class TestRefreshBackendOAuthToken:
         )
 
         assert result is None
-        assert client.calls == [("github", "rt")]
+        assert client.calls == []
 
 
 class TestSaveBackendOAuthTokensCreatedAt:

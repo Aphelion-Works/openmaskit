@@ -7,7 +7,6 @@ import logging
 import time
 from pathlib import Path
 from urllib.parse import urlencode
-from uuid import uuid4
 
 import anyio
 from starlette.requests import Request
@@ -171,14 +170,6 @@ def _build_config_from_server_info(
             "transport": "http",
             "url": server_info["mcp_host"],
         }
-        # Add OAuth config if the server requires OAuth
-        # Token is already stored by oauth_callback, upstream will load it from file
-        if server_info.get("requires_oauth"):
-            config["oauth"] = {
-                "type": "oauth2.1",
-                "client_id": "managed-by-backend",  # Placeholder - backend manages this
-                "scope": "default",  # Placeholder - backend manages this
-            }
         return config
     else:  # stdio (local/docker)
         meta = server_info.get("meta", {})
@@ -463,24 +454,16 @@ async def marketplace_install(request: Request):
             registration_token=registration_token or None,
         )
 
-    # Hosted-broker OAuth: redirect through auth.maskitmcp.com.
     if server_info.get("requires_oauth"):
-        csrf_state = str(uuid4())
-        oauth_states[csrf_state] = {
-            "mode": "broker",
-            "server_id": backend_id,
-            "handle": server_id,
-            "timestamp": time.time(),
-        }
-
-        base_url = f"{request.url.scheme}://{request.url.netloc}"
-        redirect_uri = f"{base_url}/oauth/callback/{server_id}"
-        oauth_url = backend_client.get_oauth_authorize_url(
-            server_id=backend_id, state=csrf_state, redirect_uri=redirect_uri
+        return JSONResponse(
+            {
+                "error": (
+                    "This server has no local OAuth mode. "
+                    "Use bring-your-own credentials or direct registration."
+                )
+            },
+            status_code=400,
         )
-
-        logger.info(f"Initiating OAuth flow for {server_id}: {oauth_url}")
-        return JSONResponse({"ok": True, "requires_oauth": True, "oauth_url": oauth_url})
 
     # HTTP + static-header auth (Datadog-style): no OAuth, but the catalog
     # entry declares header-name credentials in meta.headers.
@@ -646,15 +629,13 @@ async def _install_and_connect(store, manager, server_id, server_info, config) -
 async def marketplace_reauthorize(request: Request):
     """Trigger a fresh OAuth flow for an installed server.
 
-    All three modes (broker / BYO / DCR) now return a fresh ``oauth_url`` for
-    the dashboard to navigate to in-tab. The callback handler at
-    ``/oauth/callback/{handle}`` exchanges the code, writes new tokens, and
-    reconnects the target.
+    BYO and DCR return a fresh ``oauth_url`` for the dashboard to navigate to
+    in-tab. The callback handler at ``/oauth/callback/{handle}`` exchanges the
+    code with the provider, writes new tokens, and reconnects the target.
     """
     state = request.app.state.proxy_state
     store = state.store
     manager = state.target_manager
-    backend_client = getattr(request.app.state, "backend_client", None)
     oauth_states = getattr(request.app.state, "oauth_states", {})
 
     target_id = request.path_params.get("target_id")
@@ -678,32 +659,16 @@ async def marketplace_reauthorize(request: Request):
             {"error": "Server does not use OAuth"}, status_code=400
         )
 
-    # Hosted-broker installs are tagged with the "managed-by-backend" placeholder.
-    is_hosted_broker = oauth_cfg.get("client_id") == "managed-by-backend"
-
-    if is_hosted_broker:
-        if not backend_client:
-            return JSONResponse({"error": "Backend not available"}, status_code=503)
-        backend_id = existing["backend_id"]
-        if not backend_id:
-            return JSONResponse(
-                {"error": "Server missing backend_id; cannot reauthorize"},
-                status_code=500,
-            )
-
-        csrf_state = str(uuid4())
-        oauth_states[csrf_state] = {
-            "mode": "broker",
-            "server_id": backend_id,
-            "handle": target_id,
-            "timestamp": time.time(),
-        }
-        base_url = f"{request.url.scheme}://{request.url.netloc}"
-        redirect_uri = f"{base_url}/oauth/callback/{target_id}"
-        oauth_url = backend_client.get_oauth_authorize_url(
-            server_id=backend_id, state=csrf_state, redirect_uri=redirect_uri
+    if oauth_cfg.get("client_id") == "managed-by-backend":
+        return JSONResponse(
+            {
+                "error": (
+                    "This server was installed through a remote broker. "
+                    "Remove it and install it again with a local OAuth client."
+                )
+            },
+            status_code=400,
         )
-        return JSONResponse({"ok": True, "oauth_url": oauth_url})
 
     # BYO / DCR: build a fresh authorize URL and return it for in-tab redirect.
     if not manager:

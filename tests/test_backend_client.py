@@ -8,13 +8,18 @@ import respx
 from openmaskit.backend_client import BackendClient
 
 
+def assert_catalog_request_has_no_identity(headers) -> None:
+    names = {name.lower() for name in headers}
+    assert "x-openmaskit-installation-id" not in names
+    assert not headers.get("user-agent", "").startswith("OpenMaskit/")
+
+
 @pytest_asyncio.fixture
 async def client():
     """Create backend client instance."""
     c = BackendClient(
         installation_id="test-install-123",
         openmaskit_version="0.1.0",
-        auth_url="https://test-auth.example.com",
         marketplace_url="https://test-api.example.com",
         timeout=5.0,
     )
@@ -31,10 +36,8 @@ class TestBackendClientInit:
         client = BackendClient(
             installation_id="test-123",
             openmaskit_version="1.0.0",
-            auth_url="https://custom-auth.com",
             marketplace_url="https://custom-api.com",
         )
-        assert client.auth_url == "https://custom-auth.com"
         assert client.marketplace_url == "https://custom-api.com"
         assert client.installation_id == "test-123"
         assert client.openmaskit_version == "1.0.0"
@@ -44,40 +47,35 @@ class TestBackendClientInit:
     @pytest.mark.anyio
     async def test_init_with_env_vars(self, monkeypatch):
         """Initialize client with environment variables."""
-        monkeypatch.setenv("OPENMASKIT_AUTH_BACKEND_URL", "https://env-auth.com")
         monkeypatch.setenv("OPENMASKIT_MARKETPLACE_API_URL", "https://env-api.com")
 
         client = BackendClient(
             installation_id="test-456",
             openmaskit_version="2.0.0",
         )
-        assert client.auth_url == "https://env-auth.com"
         assert client.marketplace_url == "https://env-api.com"
         await client.close()
 
     @pytest.mark.anyio
     async def test_init_with_defaults(self, monkeypatch):
         """Initialize client with default URLs when no config provided."""
-        monkeypatch.delenv("OPENMASKIT_AUTH_BACKEND_URL", raising=False)
         monkeypatch.delenv("OPENMASKIT_MARKETPLACE_API_URL", raising=False)
 
         client = BackendClient(
             installation_id="test-789",
             openmaskit_version="3.0.0",
         )
-        assert client.auth_url == "https://auth.maskitmcp.com"
         assert client.marketplace_url == "https://api.maskitmcp.com"
         await client.close()
 
     @pytest.mark.anyio
-    async def test_required_headers(self):
-        """Verify required headers are set correctly."""
+    async def test_identity_is_not_prepared_for_catalog_requests(self):
+        """Catalog calls do not carry an installation id or OpenMaskit version."""
         client = BackendClient(
             installation_id="test-abc",
             openmaskit_version="4.5.6",
         )
-        assert client.required_headers["User-Agent"] == "OpenMaskit/4.5.6"
-        assert client.required_headers["X-OpenMaskit-Installation-Id"] == "test-abc"
+        assert not hasattr(client, "required_headers")
         await client.close()
 
     @pytest.mark.anyio
@@ -232,8 +230,8 @@ class TestMarketplaceCatalog:
 
     @pytest.mark.anyio
     @respx.mock
-    async def test_get_catalog_with_required_headers(self, client):
-        """Verify required headers are sent with catalog request."""
+    async def test_get_catalog_omits_installation_identity(self, client):
+        """Catalog browse does not send an installation id or OpenMaskit version."""
         route = respx.get("https://test-api.example.com/api/marketplace/catalog").mock(
             return_value=httpx.Response(
                 200,
@@ -243,9 +241,7 @@ class TestMarketplaceCatalog:
 
         await client.get_catalog()
 
-        request = route.calls.last.request
-        assert request.headers["User-Agent"] == "OpenMaskit/0.1.0"
-        assert request.headers["X-OpenMaskit-Installation-Id"] == "test-install-123"
+        assert_catalog_request_has_no_identity(route.calls.last.request.headers)
 
     @pytest.mark.anyio
     @respx.mock
@@ -324,13 +320,14 @@ class TestServerInfo:
             "config": {"transport": "http", "url": "https://mcp.example.com"},
         }
 
-        respx.get(
+        route = respx.get(
             "https://test-api.example.com/api/marketplace/servers/test-server-uuid"
         ).mock(return_value=httpx.Response(200, json=server_data))
 
         result = await client.get_server_info("test-server-uuid")
         assert result == server_data
         assert result["name"] == "Test Server"
+        assert_catalog_request_has_no_identity(route.calls.last.request.headers)
 
     @pytest.mark.anyio
     @respx.mock
@@ -385,9 +382,7 @@ class TestVersionCheck:
         )
         result = await client.check_version()
         assert result == payload
-        # Version travels in User-Agent
-        assert route.calls.last.request.headers["User-Agent"] == "OpenMaskit/0.1.0"
-        assert route.calls.last.request.headers["X-OpenMaskit-Installation-Id"] == "test-install-123"
+        assert_catalog_request_has_no_identity(route.calls.last.request.headers)
 
     @pytest.mark.anyio
     @respx.mock
@@ -421,191 +416,6 @@ class TestVersionCheck:
         )
         result = await client.check_version()
         assert result is None
-
-
-class TestOAuthAuthorizeURL:
-    """Test OAuth authorization URL building."""
-
-    @pytest.mark.anyio
-    async def test_get_oauth_authorize_url(self, client):
-        """Build OAuth authorization URL correctly."""
-        url = client.get_oauth_authorize_url(
-            server_id="github",
-            state="random-state-123",
-            redirect_uri="http://localhost:3131/callback",
-        )
-
-        assert url.startswith("https://test-auth.example.com/auth/authorize/github?")
-        assert "state=random-state-123" in url
-        assert "redirect_uri=http%3A%2F%2Flocalhost%3A3131%2Fcallback" in url
-
-    @pytest.mark.anyio
-    async def test_get_oauth_authorize_url_encoding(self, client):
-        """Verify URL parameters are properly encoded."""
-        url = client.get_oauth_authorize_url(
-            server_id="slack",
-            state="state with spaces & special=chars",
-            redirect_uri="http://localhost:3131/callback?foo=bar",
-        )
-
-        # Should be URL-encoded
-        assert "state+with+spaces" in url or "state%20with%20spaces" in url
-        assert "%26" in url  # & encoded
-        assert "%3D" in url  # = encoded
-
-
-class TestOAuthCodeExchange:
-    """Test OAuth code exchange."""
-
-    @pytest.mark.anyio
-    @respx.mock
-    async def test_exchange_code_success(self, client):
-        """Exchange authorization code successfully."""
-        token_data = {
-            "access_token": "eyJhbGc...",
-            "refresh_token": "refresh_abc123",
-            "token_type": "Bearer",
-            "expires_in": 3600,
-        }
-
-        respx.post("https://test-auth.example.com/api/oauth/exchange").mock(
-            return_value=httpx.Response(200, json=token_data)
-        )
-
-        result = await client.exchange_code(
-            server_id="github",
-            code="auth_code_xyz",
-        )
-
-        assert result == token_data
-        assert result["access_token"] == "eyJhbGc..."
-        assert result["refresh_token"] == "refresh_abc123"
-
-    @pytest.mark.anyio
-    @respx.mock
-    async def test_exchange_code_invalid(self, client):
-        """Handle invalid authorization code."""
-        respx.post("https://test-auth.example.com/api/oauth/exchange").mock(
-            return_value=httpx.Response(400, json={"error": "invalid_grant"})
-        )
-
-        with pytest.raises(httpx.HTTPStatusError):
-            await client.exchange_code(
-                server_id="github",
-                code="invalid_code",
-            )
-
-    @pytest.mark.anyio
-    @respx.mock
-    async def test_exchange_code_request_body(self, client):
-        """Verify request body format."""
-        route = respx.post("https://test-auth.example.com/api/oauth/exchange").mock(
-            return_value=httpx.Response(200, json={"access_token": "token"})
-        )
-
-        await client.exchange_code(
-            server_id="slack",
-            code="code123",
-        )
-
-        request = route.calls.last.request
-        body = request.content.decode()
-        assert '"server_id":"slack"' in body or '"server_id": "slack"' in body
-        assert '"code":"code123"' in body or '"code": "code123"' in body
-
-
-class TestOAuthTokenRefresh:
-    """Test OAuth token refresh."""
-
-    @pytest.mark.anyio
-    @respx.mock
-    async def test_refresh_oauth_token_success(self, client):
-        """Refresh token successfully."""
-        new_token_data = {
-            "access_token": "new_access_token",
-            "refresh_token": "new_refresh_token",
-            "token_type": "Bearer",
-            "expires_in": 3600,
-        }
-
-        respx.post("https://test-auth.example.com/api/oauth/refresh").mock(
-            return_value=httpx.Response(200, json=new_token_data)
-        )
-
-        result = await client.refresh_oauth_token(
-            server_id="github",
-            refresh_token="old_refresh_token",
-        )
-
-        assert result == new_token_data
-        assert result["access_token"] == "new_access_token"
-        assert result["refresh_token"] == "new_refresh_token"
-
-    @pytest.mark.anyio
-    @respx.mock
-    async def test_refresh_oauth_token_expired(self, client):
-        """Handle expired refresh token (401)."""
-        respx.post("https://test-auth.example.com/api/oauth/refresh").mock(
-            return_value=httpx.Response(401, json={"error": "invalid_token"})
-        )
-
-        result = await client.refresh_oauth_token(
-            server_id="github",
-            refresh_token="expired_token",
-        )
-
-        # Should return None on 401
-        assert result is None
-
-    @pytest.mark.anyio
-    @respx.mock
-    async def test_refresh_oauth_token_server_error(self, client):
-        """Handle server errors during refresh."""
-        respx.post("https://test-auth.example.com/api/oauth/refresh").mock(
-            return_value=httpx.Response(500, text="Internal Server Error")
-        )
-
-        result = await client.refresh_oauth_token(
-            server_id="slack",
-            refresh_token="valid_token",
-        )
-
-        # Should return None on server error
-        assert result is None
-
-    @pytest.mark.anyio
-    @respx.mock
-    async def test_refresh_oauth_token_network_error(self, client):
-        """Handle network errors during refresh."""
-        respx.post("https://test-auth.example.com/api/oauth/refresh").mock(
-            side_effect=httpx.ConnectError("Connection refused")
-        )
-
-        result = await client.refresh_oauth_token(
-            server_id="github",
-            refresh_token="token",
-        )
-
-        # Should return None on network error
-        assert result is None
-
-    @pytest.mark.anyio
-    @respx.mock
-    async def test_refresh_oauth_token_request_body(self, client):
-        """Verify request body format for token refresh."""
-        route = respx.post("https://test-auth.example.com/api/oauth/refresh").mock(
-            return_value=httpx.Response(200, json={"access_token": "new"})
-        )
-
-        await client.refresh_oauth_token(
-            server_id="github",
-            refresh_token="refresh_abc",
-        )
-
-        request = route.calls.last.request
-        body = request.content.decode()
-        assert '"server_id":"github"' in body or '"server_id": "github"' in body
-        assert '"refresh_token":"refresh_abc"' in body or '"refresh_token": "refresh_abc"' in body
 
 
 class TestClientLifecycle:
