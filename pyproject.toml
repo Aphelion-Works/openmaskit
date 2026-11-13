@@ -23,15 +23,16 @@ classifiers = [
 ]
 
 dependencies = [
-    "mcp[cli]>=1.27.0,<2",
-    "starlette>=0.40.0",
+    "mcp[cli]>=1.30.0,<2",
+    # 1.4+ FileResponse waits for client disconnect and stalls httpx's ASGI transport.
+    "starlette>=1.3.1,<1.4",
     "uvicorn[standard]>=0.30.0",
     "aiosqlite>=0.20.0",
     "pyyaml>=6.0",
     "httpx>=0.27.0",
     "pydantic>=2.0",
-    "anyio>=4.0",
-    "cryptography>=48.0.0",  # For OAuth token encryption
+    "anyio>=4.14.2",
+    "cryptography>=50.0.0",  # For OAuth token encryption
     "pyahocorasick>=2.0.0",
 ]
 
@@ -70,6 +71,16 @@ dev = [
 e2e = [
     "pytest>=8.0",
     "pytest-playwright>=0.5.0",
+]
+
+[tool.uv]
+constraint-dependencies = [
+    "certifi>=2026.10.18",
+    "idna>=3.15",
+    "pydantic-settings>=2.14.2",
+    "pyjwt>=2.15.0",
+    "python-multipart>=0.0.31",
+    "urllib3>=2.8.0",
 ]
 
 [tool.pytest.ini_options]
