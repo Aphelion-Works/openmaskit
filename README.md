@@ -179,7 +179,8 @@ openmaskit --version
 | `OPENMASKIT_ALLOWED_ORIGINS` | Comma-separated extra origins allowed to call `/api/*` |
 | `OPENMASKIT_MAX_REQUEST_BYTES` | Max HTTP request body size in bytes for the dashboard and MCP endpoints (default 1 MiB). Oversized requests get a 413. |
 | `OPENMASKIT_MAX_PARSE_BYTES` | Max length of an upstream text block (in chars) handed to the JSON / Python-repr parser (default 1 MiB). Oversized blocks skip parsing and fall through as plain text. |
-| `OPENMASKIT_DISABLE_MARKETPLACE` | Set to `1` to opt out of all calls to `api.maskitmcp.com` (catalog, server detail, version check). Custom servers continue to work. |
+| `OPENMASKIT_MARKETPLACE_API_URL` | Catalog origin (default `https://aphelion-works.github.io/openmaskit-catalog`). |
+| `OPENMASKIT_DISABLE_MARKETPLACE` | Set to `1` to skip catalog browse, server detail, and version check. Custom servers continue to work. |
 
 ## Dashboard
 

@@ -22,7 +22,8 @@ class BackendClient:
         timeout: float = 10.0,
     ):
         self.marketplace_url = marketplace_url or os.getenv(
-            "OPENMASKIT_MARKETPLACE_API_URL", "https://api.maskitmcp.com"
+            "OPENMASKIT_MARKETPLACE_API_URL",
+            "https://aphelion-works.github.io/openmaskit-catalog",
         )
         self.client = httpx.AsyncClient(timeout=timeout)
         # OPENMASKIT_DISABLE_MARKETPLACE=1 opts out of catalog browse,

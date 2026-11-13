@@ -65,7 +65,10 @@ class TestBackendClientInit:
             installation_id="test-789",
             openmaskit_version="3.0.0",
         )
-        assert client.marketplace_url == "https://api.maskitmcp.com"
+        assert (
+            client.marketplace_url
+            == "https://aphelion-works.github.io/openmaskit-catalog"
+        )
         await client.close()
 
     @pytest.mark.anyio
