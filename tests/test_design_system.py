@@ -98,7 +98,7 @@ def test_upstream_download_sends_a_token_only_to_the_pinned_host(monkeypatch):
     captured = {}
 
     class Response:
-        url = "https://raw.githubusercontent.com/ricardomartins-gravitee/openmaskit-design-system/rev/LICENSE"
+        url = "https://api.github.com/repos/Aphelion-Works/openmaskit-design-system/contents/LICENSE?ref=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 
         def read(self, _limit):
             return b"license"
@@ -112,14 +112,16 @@ def test_upstream_download_sends_a_token_only_to_the_pinned_host(monkeypatch):
     def fake_urlopen(request, timeout):
         captured["url"] = request.full_url
         captured["authorization"] = request.get_header("Authorization")
+        captured["accept"] = request.get_header("Accept")
         captured["timeout"] = timeout
         return Response()
 
     with patch.object(design, "urlopen", fake_urlopen):
         assert design.download("a" * 40, "LICENSE") == b"license"
     assert captured["authorization"] == "Bearer test-token"
+    assert captured["accept"] == "application/vnd.github.raw"
     assert captured["url"].startswith(
-        "https://raw.githubusercontent.com/ricardomartins-gravitee/openmaskit-design-system/"
+        "https://api.github.com/repos/Aphelion-Works/openmaskit-design-system/contents/LICENSE?ref="
     )
     assert captured["timeout"] == 30
 

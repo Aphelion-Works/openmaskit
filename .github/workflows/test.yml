@@ -31,6 +31,8 @@ jobs:
         run: uv sync --frozen
 
       - name: Verify pinned shared design assets
+        env:
+          OPENMASKIT_DESIGN_SYSTEM_TOKEN: ${{ github.token }}
         run: python3 scripts/design_system.py --check-upstream
 
       - name: Verify shared assets in the built Python distribution

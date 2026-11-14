@@ -13,7 +13,7 @@ from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 
 ROOT = Path(__file__).resolve().parents[1]
-REPOSITORY = "ricardomartins-gravitee/openmaskit-design-system"
+REPOSITORY = "Aphelion-Works/openmaskit-design-system"
 FILES = {
     "web/tokens.css": "tokens.css",
     "web/components.css": "components.css",
@@ -54,16 +54,25 @@ def validate_lock(lock):
 
 def download(revision, name):
     # Callers validate revision and use the fixed file list before any request.
-    # A private source rejects anonymous downloads, so a read token can be supplied.
-    # The token is sent only to the pinned raw host.
-    url = f"https://raw.githubusercontent.com/{REPOSITORY}/{revision}/{name}"
-    headers = {"User-Agent": "openmaskit-design-pin"}
+    # The design system is private because Companion consumes the native package.
+    # raw.githubusercontent.com rejects the workflow token, so a token uses the API.
     token = os.environ.get("OPENMASKIT_DESIGN_SYSTEM_TOKEN", "").strip()
     if token:
-        headers["Authorization"] = f"Bearer {token}"
+        url = f"https://api.github.com/repos/{REPOSITORY}/contents/{name}?ref={revision}"
+        headers = {
+            "Accept": "application/vnd.github.raw",
+            "Authorization": f"Bearer {token}",
+            "User-Agent": "openmaskit-design-pin",
+            "X-GitHub-Api-Version": "2022-11-28",
+        }
+        allowed = "https://api.github.com/"
+    else:
+        url = f"https://raw.githubusercontent.com/{REPOSITORY}/{revision}/{name}"
+        headers = {"User-Agent": "openmaskit-design-pin"}
+        allowed = "https://raw.githubusercontent.com/"
     try:
         with urlopen(Request(url, headers=headers), timeout=30) as response:
-            if not response.url.startswith("https://raw.githubusercontent.com/"):
+            if not response.url.startswith(allowed):
                 raise ValueError("Unexpected design-system download origin")
             data = response.read(1024 * 1024 + 1)
     except HTTPError as exc:
