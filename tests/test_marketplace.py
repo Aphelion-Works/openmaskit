@@ -133,7 +133,8 @@ def mock_backend_client():
     client.get_catalog = AsyncMock(side_effect=mock_get_catalog)
 
     # Mock get_server_info to return specific server details
-    async def mock_get_server_info(server_id):
+    async def mock_get_server_info(server_id, catalog_id=None):
+        del catalog_id
         # Find by UUID
         for entry in MOCK_CATALOG:
             if entry["id"] == server_id:
