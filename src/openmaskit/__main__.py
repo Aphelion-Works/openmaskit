@@ -358,7 +358,11 @@ async def async_main():
     # Initialize backend client for marketplace and auth integration
     from openmaskit.backend_client import BackendClient
 
-    backend_client = BackendClient(installation_id=installation_id, openmaskit_version=openmaskit_version)
+    backend_client = BackendClient(
+        installation_id=installation_id,
+        openmaskit_version=openmaskit_version,
+        state_dir=str(Path(config.store_path).expanduser().parent),
+    )
     oauth_states: dict[str, dict] = {}  # {csrf_state: {server_id, handle, timestamp}}
 
     # Store backend_client in state for token refresh

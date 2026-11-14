@@ -115,7 +115,8 @@ class TestBackendClientInit:
         # Intentionally do NOT register any respx route — if the client tries
         # to send a request, respx will raise.
         result = await client.get_catalog()
-        assert result == {"data": [], "meta": {"total": 0, "page": 1, "size": 12, "total_pages": 0}}
+        assert result["data"] == []
+        assert result["catalogs"] == []
         await client.close()
 
     @pytest.mark.anyio
@@ -182,9 +183,10 @@ class TestMarketplaceCatalog:
         )
 
         result = await client.get_catalog()
-        assert result == catalog_data
         assert len(result["data"]) == 2
+        assert result["data"][0]["catalog_id"] == "default"
         assert result["meta"]["total"] == 2
+        assert result["catalogs"][0]["status"] == "ok"
 
     @pytest.mark.anyio
     @respx.mock
@@ -255,11 +257,8 @@ class TestMarketplaceCatalog:
         )
 
         result = await client.get_catalog()
-        # Should return empty result on error
-        assert result == {
-            "data": [],
-            "meta": {"total": 0, "page": 1, "size": 12, "total_pages": 0},
-        }
+        assert result["data"] == []
+        assert result["catalogs"][0]["status"] == "unavailable"
 
     @pytest.mark.anyio
     @respx.mock
@@ -270,11 +269,8 @@ class TestMarketplaceCatalog:
         )
 
         result = await client.get_catalog()
-        # Should return empty result on network error
-        assert result == {
-            "data": [],
-            "meta": {"total": 0, "page": 1, "size": 12, "total_pages": 0},
-        }
+        assert result["data"] == []
+        assert result["catalogs"][0]["status"] == "unavailable"
 
     @pytest.mark.anyio
     @respx.mock
@@ -285,11 +281,8 @@ class TestMarketplaceCatalog:
         )
 
         result = await client.get_catalog()
-        # Should return empty result for unexpected format
-        assert result == {
-            "data": [],
-            "meta": {"total": 0, "page": 1, "size": 12, "total_pages": 0},
-        }
+        assert result["data"] == []
+        assert result["catalogs"][0]["status"] == "unavailable"
 
     @pytest.mark.anyio
     async def test_get_catalog_no_marketplace_url(self):
@@ -301,10 +294,7 @@ class TestMarketplaceCatalog:
         )
 
         result = await client.get_catalog()
-        assert result == {
-            "data": [],
-            "meta": {"total": 0, "page": 1, "size": 12, "total_pages": 0},
-        }
+        assert result["data"] == []
         await client.close()
 
 
@@ -328,8 +318,8 @@ class TestServerInfo:
         ).mock(return_value=httpx.Response(200, json=server_data))
 
         result = await client.get_server_info("test-server-uuid")
-        assert result == server_data
         assert result["name"] == "Test Server"
+        assert result["catalog_id"] == "default"
         assert_catalog_request_has_no_identity(route.calls.last.request.headers)
 
     @pytest.mark.anyio
@@ -451,3 +441,81 @@ class TestClientLifecycle:
         finally:
             await client.close()
             assert client.client.is_closed
+
+
+class TestMultipleCatalogs:
+    """Several catalogs are read together, and a token stays on its own host."""
+
+    @pytest.mark.anyio
+    @respx.mock
+    async def test_merges_sources_and_keeps_a_rejected_token_visible(self, tmp_path, monkeypatch):
+        public = tmp_path / "catalogs.json"
+        tokens = tmp_path / "tokens"
+        tokens.mkdir()
+        (tokens / "personal").write_text("personal-token\n")
+        public.write_text(
+            """
+            {"catalogs": [
+              {"id": "community", "name": "Community", "url": "https://catalog.example"},
+              {"id": "personal", "name": "Personal", "url": "https://raw.githubusercontent.com/owner/openmaskit-catalog/main"}
+            ]}
+            """
+        )
+        monkeypatch.setenv("OPENMASKIT_MARKETPLACE_CATALOGS", str(public))
+        monkeypatch.setenv("OPENMASKIT_MARKETPLACE_TOKENS_DIR", str(tokens))
+        community = respx.get("https://catalog.example/api/marketplace/catalog").mock(
+            return_value=httpx.Response(
+                200,
+                json={
+                    "data": [{"id": "one", "handle": "one", "name": "One"}],
+                    "meta": {"total": 1, "page": 1, "size": 100, "total_pages": 1},
+                },
+            )
+        )
+        personal = respx.get(
+            "https://raw.githubusercontent.com/owner/openmaskit-catalog/main/api/marketplace/catalog"
+        ).mock(return_value=httpx.Response(401))
+        other = respx.get("https://example.com/api/marketplace/catalog").mock(
+            return_value=httpx.Response(200, json={"data": [], "meta": {}})
+        )
+
+        client = BackendClient(installation_id="test", openmaskit_version="1.0.0")
+        result = await client.get_catalog()
+        await client.close()
+
+        assert [entry["name"] for entry in result["data"]] == ["One"]
+        assert result["data"][0]["catalog_id"] == "community"
+        statuses = {item["id"]: item["status"] for item in result["catalogs"]}
+        assert statuses == {"community": "ok", "personal": "unauthorized"}
+        assert community.calls.last.request.headers.get("authorization") is None
+        assert personal.calls.last.request.headers["authorization"] == "Bearer personal-token"
+        assert other.calls == []
+
+    @pytest.mark.anyio
+    @respx.mock
+    async def test_server_detail_uses_the_named_catalog(self, tmp_path, monkeypatch):
+        listing = tmp_path / "catalogs.json"
+        listing.write_text(
+            """
+            {"catalogs": [
+              {"id": "community", "name": "Community", "url": "https://catalog.example"},
+              {"id": "personal", "name": "Personal", "url": "https://private.example"}
+            ]}
+            """
+        )
+        monkeypatch.setenv("OPENMASKIT_MARKETPLACE_CATALOGS", str(listing))
+        monkeypatch.delenv("OPENMASKIT_MARKETPLACE_TOKENS_DIR", raising=False)
+        respx.get("https://catalog.example/api/marketplace/servers/server-1").mock(
+            return_value=httpx.Response(404)
+        )
+        personal = respx.get("https://private.example/api/marketplace/servers/server-1").mock(
+            return_value=httpx.Response(200, json={"id": "server-1", "name": "Private"})
+        )
+
+        client = BackendClient(installation_id="test", openmaskit_version="1.0.0")
+        result = await client.get_server_info("server-1", "personal")
+        await client.close()
+
+        assert result["name"] == "Private"
+        assert result["catalog_id"] == "personal"
+        assert personal.calls.last.request.headers.get("authorization") is None

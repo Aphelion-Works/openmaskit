@@ -235,6 +235,11 @@ async def marketplace_list(request: Request):
     catalog_response = await backend_client.get_catalog(page=page, size=size, query=query)
     backend_catalog = catalog_response["data"]
     meta = catalog_response["meta"]
+    handles = {}
+    for entry in backend_catalog:
+        handle = entry.get("handle")
+        if handle:
+            handles[handle] = handles.get(handle, 0) + 1
 
     installed = await store.get_installed_servers()
     installed_map = {s["id"]: s for s in installed}
@@ -245,7 +250,8 @@ async def marketplace_list(request: Request):
         if not handle:
             continue
 
-        server_id = handle  # Use handle as local ID
+        catalog_id = entry.get("catalog_id") or "community"
+        server_id = handle if handles[handle] == 1 else f"{catalog_id}--{handle}"
         record = installed_map.get(server_id)
         target = state.get_target(server_id)
 
@@ -265,6 +271,8 @@ async def marketplace_list(request: Request):
 
         servers.append({
             "id": server_id,
+            "catalog_id": catalog_id,
+            "catalog_name": entry.get("catalog_name") or "Community",
             "backend_id": entry["id"],  # UUID for backend API
             "handle": handle,
             "name": entry["name"],
@@ -285,7 +293,38 @@ async def marketplace_list(request: Request):
             "connected": target is not None and target.initialized if record and record["active"] else False,
         })
 
-    return JSONResponse({"servers": servers, "meta": meta})
+    return JSONResponse({
+        "servers": servers,
+        "meta": meta,
+        "catalogs": catalog_response.get("catalogs") or [],
+    })
+
+
+async def marketplace_catalog_settings(request: Request):
+    backend_client = getattr(request.app.state, "backend_client", None)
+    if not backend_client:
+        return JSONResponse({"error": "Backend not available"}, status_code=503)
+    return JSONResponse(backend_client.catalog_settings())
+
+
+async def marketplace_catalog_save(request: Request):
+    backend_client = getattr(request.app.state, "backend_client", None)
+    if not backend_client:
+        return JSONResponse({"error": "Backend not available"}, status_code=503)
+    if not getattr(backend_client, "editable", False):
+        return JSONResponse({"error": "Catalogs are not editable"}, status_code=409)
+    try:
+        body = await request.json()
+    except Exception:
+        return JSONResponse({"error": "Each catalog needs an id, name, and address"}, status_code=400)
+    entries = body.get("catalogs") if isinstance(body, dict) else None
+    if not isinstance(entries, list):
+        return JSONResponse({"error": "Each catalog needs an id, name, and address"}, status_code=400)
+    try:
+        settings = backend_client.replace_catalogs(entries)
+    except ValueError as exc:
+        return JSONResponse({"error": str(exc)}, status_code=400)
+    return JSONResponse(settings)
 
 
 async def marketplace_install(request: Request):
@@ -329,8 +368,10 @@ async def marketplace_install(request: Request):
             status_code=409,
         )
 
-    # Fetch server details from backend
-    server_info = await backend_client.get_server_info(backend_id)
+    # Fetch server details from the catalog that listed this server.
+    server_info = await backend_client.get_server_info(
+        backend_id, (body.get("catalog_id") or "").strip() or None
+    )
     if not server_info:
         return JSONResponse({"error": "Server not found"}, status_code=404)
 

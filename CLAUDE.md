@@ -141,7 +141,7 @@ Two SQLite databases:
 
 The marketplace catalog is **fetched from a remote backend**, not a local file. There is **no `marketplace.json`** in the repo — entries are published as static files and fetched over HTTP. Installed servers are persisted in the `mcp_servers` SQLite table and connected at runtime via `TargetManager`.
 
-- `backend_client.py` is the HTTP client. It targets `OPENMASKIT_MARKETPLACE_API_URL` (default `https://aphelion-works.github.io/openmaskit-catalog`) for catalog reads. OAuth install and refresh stay on this machine.
+- `backend_client.py` is the HTTP client. It reads `OPENMASKIT_MARKETPLACE_CATALOGS` when that file is set, otherwise `OPENMASKIT_MARKETPLACE_API_URL` (default `https://aphelion-works.github.io/openmaskit-catalog`). A token from `OPENMASKIT_MARKETPLACE_TOKENS_DIR` is sent only to the matching catalog address. OAuth install and refresh stay on this machine.
 - Catalog endpoint: `GET {marketplace_url}/api/marketplace/catalog?page=&size=&q=`. Returns `{data: [...], meta: {...}}`. Fail-open: failures return an empty page so the UI still renders.
 - On install, the user provides any required env vars / credentials via a modal; config is saved to `mcp_servers` and the server is hot-connected via `TargetManager`.
 - Servers can be deactivated (disconnected but config retained) and reactivated without re-entering credentials.

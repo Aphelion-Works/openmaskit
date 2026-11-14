@@ -8,7 +8,7 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,300;0,9..40,400;0,9..40,500;0,9..40,600;0,9..40,700;1,9..40,400&family=JetBrains+Mono:wght@400;500;600&display=swap">
-    <link rel="stylesheet" href="/static/style.css">
+    <link rel="stylesheet" href="/static/style.css?v=catalog-icons">
     <script src="/static/shared.js"></script>
     <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.14.8/dist/cdn.min.js"></script>
 </head>
@@ -25,7 +25,13 @@
 
     <main>
         <section class="panel">
-            <h2>Marketplace</h2>
+            <div class="marketplace-heading" style="display: flex; align-items: center; gap: 1rem; margin-bottom: 1.25rem;">
+                <h2 style="margin-bottom: 0; flex: 1 1 auto;">Marketplace</h2>
+                <button type="button" class="btn-cancel" style="margin-left: auto; flex: 0 0 auto;" @click="openCatalogs()">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg>
+                    Catalogs
+                </button>
+            </div>
             <p class="section-hint">Browse and install MCP servers. Installed servers appear on the Servers page automatically.</p>
 
             <div class="marketplace-search">
@@ -42,6 +48,10 @@
             <div x-show="loading" class="loading-overlay">
                 <span class="spinner"></span> Loading marketplace...
             </div>
+
+            <template x-for="catalog in catalogs" :key="catalog.id">
+                <p class="marketplace-card-desc" x-show="catalog.status && catalog.status !== 'ok'" x-text="catalog.message"></p>
+            </template>
 
             <div class="tools-grid" x-show="!loading && servers.length > 0">
                 <template x-for="server in servers" :key="server.id">
@@ -65,6 +75,7 @@
                         </div>
 
                         <h3 x-text="server.name"></h3>
+                        <p class="marketplace-card-desc" x-show="catalogs.length > 1" x-text="server.catalog_name"></p>
                         <p class="marketplace-card-desc" x-text="server.description"></p>
 
                         <div class="marketplace-card-tags">
@@ -152,6 +163,96 @@
             </div>
         </section>
     </main>
+
+    <!-- Catalog list, with an edit screen in the same popup -->
+    <div x-show="catalogEditor.visible" class="modal-backdrop" @keydown.escape.window="catalogEscape()" style="display: none;">
+        <div class="modal catalog-modal" @click.outside="catalogEscape()">
+            <div x-show="catalogEditor.screen === 'list'">
+                <h3>Catalogs</h3>
+                <p class="modal-desc">OpenMaskit reads every catalog in this list. A token is stored on this machine and sent only to that catalog.</p>
+                <p class="modal-desc" x-show="catalogEditor.error" x-text="catalogEditor.error"></p>
+                <p class="modal-desc" x-show="catalogEditor.rows.length === 0">No catalogs yet.</p>
+                <ul class="catalog-list" x-show="catalogEditor.rows.length > 0">
+                    <template x-for="(row, index) in catalogEditor.rows" :key="row.id || index">
+                        <li>
+                            <button type="button" class="catalog-row" @click="editCatalog(index)">
+                                <span class="catalog-row-text">
+                                    <span class="catalog-row-name" x-text="row.name || 'Untitled catalog'"></span>
+                                    <span class="catalog-row-url" x-text="row.url"></span>
+                                </span>
+                                <span class="catalog-row-token" x-text="row.token_saved ? 'Token saved' : 'No token'"></span>
+                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="9 18 15 12 9 6"/></svg>
+                            </button>
+                        </li>
+                    </template>
+                </ul>
+                <div class="modal-actions">
+                    <button type="button" class="btn-cancel" @click="addCatalog()" :disabled="!catalogEditor.editable">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
+                        Add catalog
+                    </button>
+                    <button type="button" class="btn-primary" @click="catalogEditor.visible = false">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12"/></svg>
+                        Close
+                    </button>
+                </div>
+            </div>
+
+            <template x-if="catalogEditor.screen === 'edit' && catalogEditor.draft">
+            <div>
+                <button type="button" class="catalog-back" @click="backFromCatalogEdit()" :disabled="catalogEditor.saving">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="15 18 9 12 15 6"/></svg>
+                    Back
+                </button>
+                <h3 x-text="catalogEditor.editIndex < 0 ? 'Add catalog' : 'Edit catalog'"></h3>
+                <p class="modal-desc">Back leaves this catalog unchanged. Save writes it into the list.</p>
+                <p class="modal-desc" x-show="catalogEditor.error" x-text="catalogEditor.error"></p>
+                <label class="modal-field">
+                    <span class="modal-var-name">Name</span>
+                    <input class="modal-input" x-model="catalogEditor.draft.name" autocomplete="off" :disabled="!catalogEditor.editable">
+                </label>
+                <label class="modal-field">
+                    <span class="modal-var-name">Address</span>
+                    <input class="modal-input" x-model="catalogEditor.draft.url" autocomplete="off" spellcheck="false" :disabled="!catalogEditor.editable">
+                </label>
+                <label class="modal-field">
+                    <span class="modal-var-name">
+                        Token
+                        <span class="modal-var-optional" x-show="catalogEditor.draft.token_saved && !catalogEditor.draft.clear_token">saved</span>
+                    </span>
+                    <input class="modal-input" type="password" x-model="catalogEditor.draft.token" autocomplete="off"
+                           :disabled="!catalogEditor.editable"
+                           :placeholder="catalogEditor.draft.token_saved ? 'Replace the saved token' : 'Only for a private catalog'">
+                </label>
+                <div class="modal-actions">
+                    <button type="button" class="btn-cancel" x-show="catalogEditor.draft.token_saved && !catalogEditor.draft.clear_token"
+                            @click="catalogEditor.draft.clear_token = true">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+                        Remove token
+                    </button>
+                    <button type="button" class="btn-cancel" x-show="catalogEditor.draft.token_saved && catalogEditor.draft.clear_token"
+                            @click="catalogEditor.draft.clear_token = false">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m21 2-9.6 9.6"/><circle cx="7.5" cy="15.5" r="5.5"/></svg>
+                        Keep token
+                    </button>
+                    <button type="button" class="btn-cancel" x-show="catalogEditor.editIndex >= 0"
+                            @click="removeCatalog()" :disabled="!catalogEditor.editable || catalogEditor.saving">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+                        Remove catalog
+                    </button>
+                    <button type="button" class="btn-cancel" @click="backFromCatalogEdit()" :disabled="catalogEditor.saving">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="15 18 9 12 15 6"/></svg>
+                        Back
+                    </button>
+                    <button type="button" class="btn-primary" @click="saveCatalogDraft()" :disabled="!catalogEditor.editable || catalogEditor.saving">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="20 6 9 17 4 12"/></svg>
+                        Save
+                    </button>
+                </div>
+            </div>
+            </template>
+        </div>
+    </div>
 
     <!-- Config Modal (inline within same x-data scope) -->
     <div x-show="modal.visible" class="modal-backdrop" @keydown.escape.window="modalCancel()" style="display: none;">
@@ -614,10 +715,123 @@ function marketplacePage() {
 
     return {
         servers: [],
+        catalogs: [],
+        catalogEditor: { visible: false, screen: 'list', editable: false, rows: [], draft: null, editIndex: -1, error: '', saving: false },
         search: '',
         loading: true,
         toasts: [],
         updateRequired: false,
+
+        catalogRow(row) {
+            return {
+                id: row.id || '',
+                name: row.name || '',
+                url: row.url || '',
+                token: '',
+                token_saved: !!row.token_saved,
+                clear_token: false,
+            };
+        },
+
+        async openCatalogs() {
+            this.catalogEditor.error = '';
+            this.catalogEditor.screen = 'list';
+            this.catalogEditor.draft = null;
+            this.catalogEditor.editIndex = -1;
+            try {
+                const res = await fetch('/api/marketplace/catalogs');
+                if (!res.ok) throw new Error('The catalog list could not be read');
+                const data = await res.json();
+                this.applyCatalogSettings(data);
+                this.catalogEditor.visible = true;
+            } catch (e) {
+                this.showToast('The catalog list could not be read', 'error');
+            }
+        },
+
+        applyCatalogSettings(data) {
+            this.catalogEditor.editable = !!data.editable;
+            this.catalogEditor.rows = (data.catalogs || []).map(row => this.catalogRow(row));
+        },
+
+        editCatalog(index) {
+            const row = this.catalogEditor.rows[index];
+            if (!row) return;
+            this.catalogEditor.draft = this.catalogRow(row);
+            this.catalogEditor.editIndex = index;
+            this.catalogEditor.error = '';
+            this.catalogEditor.screen = 'edit';
+        },
+
+        addCatalog() {
+            this.catalogEditor.draft = this.catalogRow({ url: 'https://' });
+            this.catalogEditor.editIndex = -1;
+            this.catalogEditor.error = '';
+            this.catalogEditor.screen = 'edit';
+        },
+
+        backFromCatalogEdit() {
+            if (this.catalogEditor.saving) return;
+            this.catalogEditor.draft = null;
+            this.catalogEditor.editIndex = -1;
+            this.catalogEditor.error = '';
+            this.catalogEditor.screen = 'list';
+        },
+
+        catalogEscape() {
+            if (!this.catalogEditor.visible || this.catalogEditor.saving) return;
+            if (this.catalogEditor.screen === 'edit') this.backFromCatalogEdit();
+            else this.catalogEditor.visible = false;
+        },
+
+        catalogPayload(rows) {
+            return rows.map(row => ({
+                id: row.id,
+                name: row.name,
+                url: row.url,
+                token: row.token,
+                clear_token: !!row.clear_token,
+            }));
+        },
+
+        async saveCatalogDraft() {
+            const draft = this.catalogEditor.draft;
+            if (!draft) return;
+            const rows = this.catalogEditor.rows.map(row => this.catalogRow(row));
+            const next = { ...draft };
+            if (this.catalogEditor.editIndex >= 0) rows[this.catalogEditor.editIndex] = next;
+            else rows.push(next);
+            await this.persistCatalogs(rows, true);
+        },
+
+        async removeCatalog() {
+            if (this.catalogEditor.editIndex < 0) return;
+            const rows = this.catalogEditor.rows.filter((_, index) => index !== this.catalogEditor.editIndex);
+            await this.persistCatalogs(rows, true);
+        },
+
+        async persistCatalogs(rows, returnToList) {
+            this.catalogEditor.saving = true;
+            this.catalogEditor.error = '';
+            try {
+                const res = await fetch('/api/marketplace/catalogs', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ catalogs: this.catalogPayload(rows) }),
+                });
+                const data = await res.json();
+                if (!res.ok) throw new Error(data.error || 'The catalog list could not be saved');
+                this.applyCatalogSettings(data);
+                this.catalogEditor.draft = null;
+                this.catalogEditor.editIndex = -1;
+                if (returnToList) this.catalogEditor.screen = 'list';
+                await this.loadCatalog(1);
+            } catch (e) {
+                this.catalogEditor.error = e.message || 'The catalog list could not be saved';
+            } finally {
+                this.catalogEditor.saving = false;
+            }
+        },
 
         installType(server) {
             const mode = server.oauth_mode;
@@ -1152,6 +1366,7 @@ function marketplacePage() {
 
                 const data = await res.json();
                 this.servers = data.servers.map(s => ({ ...s, installing: false, deactivating: false }));
+                this.catalogs = data.catalogs || [];
 
                 // Update pagination metadata
                 if (data.meta) {
@@ -1253,6 +1468,7 @@ function marketplacePage() {
                 const payload = {
                     server_id: server.id,
                     backend_id: server.backend_id,
+                    catalog_id: server.catalog_id,
                     env_vars: envVars,
                     user_args: userArgs,
                 };
