@@ -60,7 +60,8 @@ def patched_transport(monkeypatch):
         timeout = _CapturingAsyncClient.last_kwargs["timeout"]
         assert timeout.connect == 30.0
         assert timeout.read == 300.0
-        assert _CapturingAsyncClient.last_kwargs["follow_redirects"] is True
+        # The MCP client follows redirects inside the endpoint origin itself.
+        assert "follow_redirects" not in _CapturingAsyncClient.last_kwargs
 
 
 class TestPlainHttpBranchHeaders:

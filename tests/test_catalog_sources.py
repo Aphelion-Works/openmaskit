@@ -41,6 +41,17 @@ def test_saved_catalogs_live_beside_server_state(tmp_path, monkeypatch):
     assert reloaded[1].token == "stored-token"
 
 
+def test_local_acceptance_catalog_can_use_loopback_http(monkeypatch):
+    monkeypatch.delenv("OPENMASKIT_MARKETPLACE_CATALOGS", raising=False)
+    monkeypatch.setenv("OPENMASKIT_MARKETPLACE_API_URL", "http://127.0.0.1:9")
+    sources, problems = load_catalog_sources()
+    assert problems == []
+    assert sources[0].url == "http://127.0.0.1:9"
+    monkeypatch.setenv("OPENMASKIT_MARKETPLACE_API_URL", "http://catalog.example")
+    sources, problems = load_catalog_sources()
+    assert sources[0].url == "https://aphelion-works.github.io/openmaskit-catalog"
+
+
 def test_default_catalog_is_the_community_pages_site(monkeypatch):
     monkeypatch.delenv("OPENMASKIT_MARKETPLACE_CATALOGS", raising=False)
     monkeypatch.delenv("OPENMASKIT_MARKETPLACE_API_URL", raising=False)

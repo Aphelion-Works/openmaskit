@@ -5,13 +5,16 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
 import re
+import subprocess
 import zipfile
 from pathlib import Path
-from urllib.request import urlopen
+from urllib.error import HTTPError
+from urllib.request import Request, urlopen
 
 ROOT = Path(__file__).resolve().parents[1]
-REPOSITORY = "ricardomartins-gravitee/openmaskit-design-system"
+REPOSITORY = "Aphelion-Works/openmaskit-design-system"
 FILES = {
     "web/tokens.css": "tokens.css",
     "web/components.css": "components.css",
@@ -52,11 +55,29 @@ def validate_lock(lock):
 
 def download(revision, name):
     # Callers validate revision and use the fixed file list before any request.
-    url = f"https://raw.githubusercontent.com/{REPOSITORY}/{revision}/{name}"
-    with urlopen(url, timeout=30) as response:
-        if not response.url.startswith("https://raw.githubusercontent.com/"):
-            raise ValueError("Unexpected design-system download origin")
-        data = response.read(1024 * 1024 + 1)
+    # The design system is private because Companion consumes the native package.
+    # raw.githubusercontent.com rejects the workflow token, so a token uses the API.
+    token = os.environ.get("OPENMASKIT_DESIGN_SYSTEM_TOKEN", "").strip()
+    if token:
+        url = f"https://api.github.com/repos/{REPOSITORY}/contents/{name}?ref={revision}"
+        headers = {
+            "Accept": "application/vnd.github.raw",
+            "Authorization": f"Bearer {token}",
+            "User-Agent": "openmaskit-design-pin",
+            "X-GitHub-Api-Version": "2022-11-28",
+        }
+        allowed = "https://api.github.com/"
+    else:
+        url = f"https://raw.githubusercontent.com/{REPOSITORY}/{revision}/{name}"
+        headers = {"User-Agent": "openmaskit-design-pin"}
+        allowed = "https://raw.githubusercontent.com/"
+    try:
+        with urlopen(Request(url, headers=headers), timeout=30) as response:
+            if not response.url.startswith(allowed):
+                raise ValueError("Unexpected design-system download origin")
+            data = response.read(1024 * 1024 + 1)
+    except HTTPError as exc:
+        raise ValueError("The pinned design revision could not be downloaded") from exc
     if len(data) > 1024 * 1024:
         raise ValueError("Design asset exceeds size limit")
     return data
@@ -83,8 +104,35 @@ def check(root=ROOT, upstream=False):
     }
     verify(lock, contents)
     if upstream:
-        verify(lock, {name: download(lock["revision"], name) for name in FILES})
+        directory = os.environ.get("OPENMASKIT_DESIGN_SYSTEM_DIR", "").strip()
+        upstream_contents = (
+            read_design_checkout(Path(directory), lock["revision"])
+            if directory
+            else {name: download(lock["revision"], name) for name in FILES}
+        )
+        verify(lock, upstream_contents)
     return lock
+
+
+def read_design_checkout(directory, revision):
+    """Read the fixed asset list from a checkout of the pinned revision."""
+    if directory.is_symlink() or not directory.is_dir():
+        raise ValueError("The design checkout must be a directory")
+    head = subprocess.run(
+        ["git", "-C", str(directory), "rev-parse", "HEAD"],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    if head.returncode != 0 or head.stdout.strip() != revision:
+        raise ValueError("The design checkout is not the pinned revision")
+    contents = {}
+    for name in FILES:
+        path = directory.joinpath(*name.split("/"))
+        if path.is_symlink() or not path.is_file() or directory not in path.parents:
+            raise ValueError(f"Design checkout is missing {name}")
+        contents[name] = path.read_bytes()
+    return contents
 
 
 def update(revision, root=ROOT):

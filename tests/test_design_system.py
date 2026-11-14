@@ -93,6 +93,69 @@ def test_update_verifies_all_files_before_writing(tmp_path):
     assert design.check(tmp_path) == lock
 
 
+def test_upstream_download_sends_a_token_only_to_the_pinned_host(monkeypatch):
+    monkeypatch.setenv("OPENMASKIT_DESIGN_SYSTEM_TOKEN", "test-token")
+    captured = {}
+
+    class Response:
+        url = "https://api.github.com/repos/Aphelion-Works/openmaskit-design-system/contents/LICENSE?ref=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+
+        def read(self, _limit):
+            return b"license"
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+    def fake_urlopen(request, timeout):
+        captured["url"] = request.full_url
+        captured["authorization"] = request.get_header("Authorization")
+        captured["accept"] = request.get_header("Accept")
+        captured["timeout"] = timeout
+        return Response()
+
+    with patch.object(design, "urlopen", fake_urlopen):
+        assert design.download("a" * 40, "LICENSE") == b"license"
+    assert captured["authorization"] == "Bearer test-token"
+    assert captured["accept"] == "application/vnd.github.raw"
+    assert captured["url"].startswith(
+        "https://api.github.com/repos/Aphelion-Works/openmaskit-design-system/contents/LICENSE?ref="
+    )
+    assert captured["timeout"] == 30
+
+
+def test_design_checkout_must_match_the_pinned_revision(tmp_path, monkeypatch):
+    checkout = tmp_path / "design"
+    files = {
+        "LICENSE": b"license",
+        "NOTICE": b"notice",
+        "TRADEMARKS.md": b"marks",
+        "web/tokens.css": b"tokens",
+        "web/components.css": b"components",
+        "web/tokens.resolved.json": b"{}",
+    }
+    for name, data in files.items():
+        path = checkout.joinpath(*name.split("/"))
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(data)
+    revision = "a" * 40
+
+    def fake_run(args, **_kwargs):
+        class Result:
+            returncode = 0
+            stdout = revision + "\n"
+
+        assert args[:3] == ["git", "-C", str(checkout)]
+        return Result()
+
+    monkeypatch.setattr(design.subprocess, "run", fake_run)
+    assert design.read_design_checkout(checkout, revision)["LICENSE"] == b"license"
+    with pytest.raises(ValueError, match="pinned revision"):
+        design.read_design_checkout(checkout, "b" * 40)
+
+
 def test_upstream_check_uses_pinned_revision_and_detects_drift():
     lock, contents = fixture_lock()
 
