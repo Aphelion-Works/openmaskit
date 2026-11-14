@@ -7,7 +7,6 @@ import logging
 import time
 from pathlib import Path
 from urllib.parse import urlencode
-from uuid import uuid4
 
 import anyio
 from starlette.requests import Request
@@ -171,14 +170,6 @@ def _build_config_from_server_info(
             "transport": "http",
             "url": server_info["mcp_host"],
         }
-        # Add OAuth config if the server requires OAuth
-        # Token is already stored by oauth_callback, upstream will load it from file
-        if server_info.get("requires_oauth"):
-            config["oauth"] = {
-                "type": "oauth2.1",
-                "client_id": "managed-by-backend",  # Placeholder - backend manages this
-                "scope": "default",  # Placeholder - backend manages this
-            }
         return config
     else:  # stdio (local/docker)
         meta = server_info.get("meta", {})
@@ -244,6 +235,11 @@ async def marketplace_list(request: Request):
     catalog_response = await backend_client.get_catalog(page=page, size=size, query=query)
     backend_catalog = catalog_response["data"]
     meta = catalog_response["meta"]
+    handles = {}
+    for entry in backend_catalog:
+        handle = entry.get("handle")
+        if handle:
+            handles[handle] = handles.get(handle, 0) + 1
 
     installed = await store.get_installed_servers()
     installed_map = {s["id"]: s for s in installed}
@@ -254,7 +250,8 @@ async def marketplace_list(request: Request):
         if not handle:
             continue
 
-        server_id = handle  # Use handle as local ID
+        catalog_id = entry.get("catalog_id") or "community"
+        server_id = handle if handles[handle] == 1 else f"{catalog_id}--{handle}"
         record = installed_map.get(server_id)
         target = state.get_target(server_id)
 
@@ -274,6 +271,8 @@ async def marketplace_list(request: Request):
 
         servers.append({
             "id": server_id,
+            "catalog_id": catalog_id,
+            "catalog_name": entry.get("catalog_name") or "Community",
             "backend_id": entry["id"],  # UUID for backend API
             "handle": handle,
             "name": entry["name"],
@@ -294,7 +293,38 @@ async def marketplace_list(request: Request):
             "connected": target is not None and target.initialized if record and record["active"] else False,
         })
 
-    return JSONResponse({"servers": servers, "meta": meta})
+    return JSONResponse({
+        "servers": servers,
+        "meta": meta,
+        "catalogs": catalog_response.get("catalogs") or [],
+    })
+
+
+async def marketplace_catalog_settings(request: Request):
+    backend_client = getattr(request.app.state, "backend_client", None)
+    if not backend_client:
+        return JSONResponse({"error": "Backend not available"}, status_code=503)
+    return JSONResponse(backend_client.catalog_settings())
+
+
+async def marketplace_catalog_save(request: Request):
+    backend_client = getattr(request.app.state, "backend_client", None)
+    if not backend_client:
+        return JSONResponse({"error": "Backend not available"}, status_code=503)
+    if not getattr(backend_client, "editable", False):
+        return JSONResponse({"error": "Catalogs are not editable"}, status_code=409)
+    try:
+        body = await request.json()
+    except Exception:
+        return JSONResponse({"error": "Each catalog needs an id, name, and address"}, status_code=400)
+    entries = body.get("catalogs") if isinstance(body, dict) else None
+    if not isinstance(entries, list):
+        return JSONResponse({"error": "Each catalog needs an id, name, and address"}, status_code=400)
+    try:
+        settings = backend_client.replace_catalogs(entries)
+    except ValueError as exc:
+        return JSONResponse({"error": str(exc)}, status_code=400)
+    return JSONResponse(settings)
 
 
 async def marketplace_install(request: Request):
@@ -338,8 +368,10 @@ async def marketplace_install(request: Request):
             status_code=409,
         )
 
-    # Fetch server details from backend
-    server_info = await backend_client.get_server_info(backend_id)
+    # Fetch server details from the catalog that listed this server.
+    server_info = await backend_client.get_server_info(
+        backend_id, (body.get("catalog_id") or "").strip() or None
+    )
     if not server_info:
         return JSONResponse({"error": "Server not found"}, status_code=404)
 
@@ -463,24 +495,16 @@ async def marketplace_install(request: Request):
             registration_token=registration_token or None,
         )
 
-    # Hosted-broker OAuth: redirect through auth.maskitmcp.com.
     if server_info.get("requires_oauth"):
-        csrf_state = str(uuid4())
-        oauth_states[csrf_state] = {
-            "mode": "broker",
-            "server_id": backend_id,
-            "handle": server_id,
-            "timestamp": time.time(),
-        }
-
-        base_url = f"{request.url.scheme}://{request.url.netloc}"
-        redirect_uri = f"{base_url}/oauth/callback/{server_id}"
-        oauth_url = backend_client.get_oauth_authorize_url(
-            server_id=backend_id, state=csrf_state, redirect_uri=redirect_uri
+        return JSONResponse(
+            {
+                "error": (
+                    "This server has no local OAuth mode. "
+                    "Use bring-your-own credentials or direct registration."
+                )
+            },
+            status_code=400,
         )
-
-        logger.info(f"Initiating OAuth flow for {server_id}: {oauth_url}")
-        return JSONResponse({"ok": True, "requires_oauth": True, "oauth_url": oauth_url})
 
     # HTTP + static-header auth (Datadog-style): no OAuth, but the catalog
     # entry declares header-name credentials in meta.headers.
@@ -646,15 +670,13 @@ async def _install_and_connect(store, manager, server_id, server_info, config) -
 async def marketplace_reauthorize(request: Request):
     """Trigger a fresh OAuth flow for an installed server.
 
-    All three modes (broker / BYO / DCR) now return a fresh ``oauth_url`` for
-    the dashboard to navigate to in-tab. The callback handler at
-    ``/oauth/callback/{handle}`` exchanges the code, writes new tokens, and
-    reconnects the target.
+    BYO and DCR return a fresh ``oauth_url`` for the dashboard to navigate to
+    in-tab. The callback handler at ``/oauth/callback/{handle}`` exchanges the
+    code with the provider, writes new tokens, and reconnects the target.
     """
     state = request.app.state.proxy_state
     store = state.store
     manager = state.target_manager
-    backend_client = getattr(request.app.state, "backend_client", None)
     oauth_states = getattr(request.app.state, "oauth_states", {})
 
     target_id = request.path_params.get("target_id")
@@ -678,32 +700,16 @@ async def marketplace_reauthorize(request: Request):
             {"error": "Server does not use OAuth"}, status_code=400
         )
 
-    # Hosted-broker installs are tagged with the "managed-by-backend" placeholder.
-    is_hosted_broker = oauth_cfg.get("client_id") == "managed-by-backend"
-
-    if is_hosted_broker:
-        if not backend_client:
-            return JSONResponse({"error": "Backend not available"}, status_code=503)
-        backend_id = existing["backend_id"]
-        if not backend_id:
-            return JSONResponse(
-                {"error": "Server missing backend_id; cannot reauthorize"},
-                status_code=500,
-            )
-
-        csrf_state = str(uuid4())
-        oauth_states[csrf_state] = {
-            "mode": "broker",
-            "server_id": backend_id,
-            "handle": target_id,
-            "timestamp": time.time(),
-        }
-        base_url = f"{request.url.scheme}://{request.url.netloc}"
-        redirect_uri = f"{base_url}/oauth/callback/{target_id}"
-        oauth_url = backend_client.get_oauth_authorize_url(
-            server_id=backend_id, state=csrf_state, redirect_uri=redirect_uri
+    if oauth_cfg.get("client_id") == "managed-by-backend":
+        return JSONResponse(
+            {
+                "error": (
+                    "This server was installed through a remote broker. "
+                    "Remove it and install it again with a local OAuth client."
+                )
+            },
+            status_code=400,
         )
-        return JSONResponse({"ok": True, "oauth_url": oauth_url})
 
     # BYO / DCR: build a fresh authorize URL and return it for in-tab redirect.
     if not manager:

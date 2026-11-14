@@ -146,37 +146,22 @@ async def refresh_backend_oauth_token(
     store_path: str,
     backend_client: Any,  # BackendClient type
 ) -> str | None:
-    """Attempt to refresh expired OAuth token using backend API.
+    """Refresh is local for bring-your-own and direct registration.
 
-    Only valid for backend-managed marketplace servers. Self-managed tokens
-    (DCR / manual custom servers) refresh against the provider directly via
-    OAuthClientProvider — calling the backend for those would be wrong.
-
-    Returns new access_token if successful, None otherwise.
+    Those token files contain ``client_info`` and are refreshed by
+    OAuthClientProvider against the provider. A file without ``client_info``
+    was installed through the remote broker; this fork does not send that
+    refresh anywhere.
     """
+    del backend_client
     if _is_self_managed_oauth(server_id, store_path):
         logger.debug(f"{server_id} is self-managed OAuth; skipping backend refresh")
         return None
-    # Load current tokens (need refresh_token)
-    tokens = _load_backend_oauth_tokens(server_id, store_path)
-    if not tokens or not tokens.get("refresh_token"):
-        logger.warning(f"No refresh token available for {server_id}")
-        return None
-
-    refresh_token = tokens["refresh_token"]
-    logger.info(f"Attempting to refresh OAuth token for {server_id}")
-
-    # Call backend refresh API
-    new_tokens = await backend_client.refresh_oauth_token(server_id, refresh_token)
-    if not new_tokens or not new_tokens.get("access_token"):
-        logger.error(f"Token refresh failed for {server_id}")
-        return None
-
-    # Save new tokens
-    _save_backend_oauth_tokens(server_id, store_path, new_tokens)
-
-    logger.info(f"Successfully refreshed OAuth token for {server_id}")
-    return new_tokens["access_token"]
+    logger.info(
+        "Remote OAuth refresh is disabled for %s; install it again with a local OAuth client",
+        server_id,
+    )
+    return None
 
 
 class _UpstreamOwner:

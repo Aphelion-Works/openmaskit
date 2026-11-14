@@ -242,6 +242,120 @@ main {
     gap: 0.5rem;
 }
 
+.marketplace-heading {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+    margin-bottom: 1.25rem;
+}
+
+.marketplace-heading h2 {
+    margin-bottom: 0;
+    width: auto;
+    flex: 1 1 auto;
+}
+
+.marketplace-heading .btn-cancel {
+    margin-left: auto;
+    flex: 0 0 auto;
+}
+
+.modal.catalog-modal {
+    max-width: 36rem;
+}
+
+.catalog-list {
+    list-style: none;
+    margin: 0 0 0.25rem;
+    padding: 0;
+    border: 1px solid var(--border-default);
+    border-radius: var(--radius-md);
+    overflow: hidden;
+}
+
+.catalog-list li + li {
+    border-top: 1px solid var(--border-subtle);
+}
+
+.catalog-row {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    width: 100%;
+    padding: 0.75rem 0.9rem;
+    background: transparent;
+    border: 0;
+    color: inherit;
+    text-align: left;
+    cursor: pointer;
+}
+
+.catalog-row:hover {
+    background: var(--bg-hover);
+}
+
+.catalog-row-text {
+    flex: 1 1 auto;
+    min-width: 0;
+}
+
+.catalog-row-name {
+    display: block;
+    color: var(--text-primary);
+    font-weight: 600;
+}
+
+.catalog-row-url,
+.catalog-row-token {
+    display: block;
+    color: var(--text-muted);
+    font-family: var(--font-mono);
+    font-size: 0.75rem;
+}
+
+.catalog-row-url {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.catalog-row-token {
+    flex: 0 0 auto;
+}
+
+.catalog-modal .btn-cancel,
+.catalog-modal .btn-primary,
+.catalog-back,
+.marketplace-heading .btn-cancel {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+}
+
+.catalog-modal .btn-cancel svg,
+.catalog-modal .btn-primary svg,
+.catalog-back svg,
+.marketplace-heading .btn-cancel svg,
+.catalog-row > svg {
+    flex: 0 0 auto;
+}
+
+.catalog-back {
+    margin: 0 0 0.75rem;
+    padding: 0;
+    border: 0;
+    background: transparent;
+    color: var(--accent);
+    font-family: var(--font-mono);
+    font-size: 0.75rem;
+    cursor: pointer;
+}
+
+.catalog-back:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
 .panel h2::before {
     content: '';
     width: 3px;

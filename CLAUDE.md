@@ -139,9 +139,9 @@ Two SQLite databases:
 
 ### Marketplace
 
-The marketplace catalog is **fetched from a remote backend**, not a local file. There is **no `marketplace.json`** in the repo — entries live on `api.maskitmcp.com` and are paged in over HTTP. Installed servers are persisted in the `mcp_servers` SQLite table and connected at runtime via `TargetManager`.
+The marketplace catalog is **fetched from a remote backend**, not a local file. There is **no `marketplace.json`** in the repo — entries are published as static files and fetched over HTTP. Installed servers are persisted in the `mcp_servers` SQLite table and connected at runtime via `TargetManager`.
 
-- `backend_client.py` is the HTTP client. It targets `OPENMASKIT_MARKETPLACE_API_URL` (default `https://api.maskitmcp.com`) for catalog reads and `OPENMASKIT_AUTH_BACKEND_URL` (default `https://auth.maskitmcp.com`) for OAuth brokering.
+- `backend_client.py` is the HTTP client. It reads `OPENMASKIT_MARKETPLACE_CATALOGS` when that file is set, otherwise `OPENMASKIT_MARKETPLACE_API_URL` (default `https://aphelion-works.github.io/openmaskit-catalog`). A token from `OPENMASKIT_MARKETPLACE_TOKENS_DIR` is sent only to the matching catalog address. OAuth install and refresh stay on this machine.
 - Catalog endpoint: `GET {marketplace_url}/api/marketplace/catalog?page=&size=&q=`. Returns `{data: [...], meta: {...}}`. Fail-open: failures return an empty page so the UI still renders.
 - On install, the user provides any required env vars / credentials via a modal; config is saved to `mcp_servers` and the server is hot-connected via `TargetManager`.
 - Servers can be deactivated (disconnected but config retained) and reactivated without re-entering credentials.
@@ -153,7 +153,7 @@ Catalog entries carry an `oauth_mode` field that determines the install flow. Th
 
 | `oauth_mode`  | Flow                                                                                                                                                              | Redirect URI                              |
 | -------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------- |
-| `null` (hosted) | Hosted broker via `auth.maskitmcp.com`. `BackendClient.get_oauth_authorize_url` builds the URL; the broker handles code exchange; tokens land back over HTTPS.    | `http://localhost:9473/oauth/callback/{handle}` |
+| `null` / absent | Refused. This fork does not send the browser to a remote broker. The entry must set `byo` or `dcr`. | — |
 | `"byo"`         | Bring-your-own OAuth client. User pastes `client_id` / `client_secret` in the install modal; OpenMaskit runs the OAuth flow directly against the provider.        | `http://localhost:9473/oauth/callback/{handle}` |
 | `"dcr"`         | Dynamic Client Registration. OpenMaskit discovers the authorization server, registers a client at install time, then runs the OAuth flow against it. | `http://localhost:9473/oauth/callback/{handle}` |
 
@@ -169,8 +169,8 @@ Hosted-broker installs are tagged in storage with the placeholder `config.oauth.
 
 `POST /api/marketplace/{target_id}/reauthorize` triggers a fresh OAuth flow for an installed server. The Re-authorize button on each server card (`targets.html`) calls it.
 
-- **BYO / DCR**: re-runs `prepare_oauth_install` with `reauthorize=True` (preserves `client_info` so we don't re-prompt for creds or re-run DCR), stashes the state, and returns `{oauth_url}` for the UI to redirect to. The callback at `/oauth/callback/{handle}` calls `exchange_code`, writes fresh tokens, and `remove_target` + `add_target` to swap in the new connection.
-- **Hosted broker**: re-runs `BackendClient.get_oauth_authorize_url` and returns `{oauth_url}` for the UI to redirect to. The callback then re-exchanges via `oauth_callback.py` as on first install.
+- **BYO / DCR**: re-runs `prepare_oauth_install` with `reauthorize=True` (preserves `client_info` so we don't re-prompt for creds or re-run DCR), stashes the state, and returns `{oauth_url}` for the UI to redirect to. The callback at `/oauth/callback/{handle}` calls the local `exchange_code`, writes fresh tokens, and `remove_target` + `add_target` to swap in the new connection.
+- **Previous remote-broker installs** (`client_id == "managed-by-backend"`) are refused. Remove the server and install it again with BYO or DCR.
 
 ### Custom targets (runtime)
 
@@ -193,13 +193,12 @@ OAuth is split across four files in `src/openmaskit/oauth/`:
 
 OAuth tokens are stored per-server at `{store_dir}/oauth/{handle}.json`, Fernet-encrypted.
 
-Three OAuth flow shapes share `web/routes/oauth_callback.py:oauth_callback` (path `/oauth/callback/{handle}` on the web port):
+Local OAuth flows share `web/routes/oauth_callback.py:oauth_callback` (path `/oauth/callback/{handle}` on the web port):
 
-- **Marketplace servers (hosted broker).** OpenMaskit redirects the browser to `auth.maskitmcp.com`, which redirects to the provider, handles the code exchange server-side, and bounces back to the local callback with tokens. The local code never sees the provider's client_secret. See `BackendClient.get_oauth_authorize_url` / `exchange_code` / `refresh_oauth_token`.
-- **BYO marketplace targets and custom HTTP targets with user-supplied credentials.** `install_flow` writes `client_info` and runs the flow against the upstream provider directly.
+- **Bring-your-own and direct registration.** `install_flow` writes `client_info` and runs the flow against the upstream provider directly. A callback whose mode is anything else is refused, and token refresh for a file without `client_info` does not leave the machine.
 - **DCR marketplace targets and custom HTTP targets without credentials.** `install_flow` discovers the AS and runs RFC 7591 Dynamic Client Registration before kicking off the flow.
 
-Catalog entries signal the flow via an `oauth_mode` field (`"byo" | "dcr" | null`); the absence of the field implies the hosted-broker default.
+Catalog entries signal the flow via an `oauth_mode` field (`"byo" | "dcr"`). An entry that omits it is refused.
 
 ### Bind host
 
@@ -238,7 +237,7 @@ Marketplace routes:
 - `POST /api/marketplace/install` — install a server from catalog
 - `POST /api/marketplace/activate` — reactivate a previously installed server
 - `POST /api/marketplace/deactivate` — disconnect and deactivate
-- `POST /api/marketplace/{target_id}/reauthorize` — kick off a fresh OAuth flow for an installed server (BYO/DCR clears tokens and runs the flow inline; hosted-broker returns a fresh `oauth_url`)
+- `POST /api/marketplace/{target_id}/reauthorize` — kick off a fresh local OAuth flow for an installed BYO or DCR server. A remote-broker install is refused.
 - `POST /api/marketplace/{target_id}/delete` — permanently remove a marketplace server. Disconnects via `TargetManager`, deletes the OAuth token file at `{store_dir}/oauth/{handle}.json` (full file — both tokens and `client_info`), and drops the row from `mcp_servers`. Gates on `source == 'marketplace'`.
 - `POST /api/install/check` — pre-install runtime-presence check for a stdio command. Body `{command}`; returns `{present, resolved_command, resolved_path}` or `{present: false, install_hint}`. Used by the install modal's "What will run on your machine" preview; `docker` defers to `container.py`'s runtime detection (and reports the substituted runtime in `resolved_command`).
 

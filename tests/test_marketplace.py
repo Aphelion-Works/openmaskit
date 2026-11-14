@@ -324,20 +324,14 @@ class TestMarketplaceInstall:
 
     @pytest.mark.anyio
     async def test_install_with_oauth_vars(self, client, state):
-        """OAuth servers initiate OAuth flow instead of direct install."""
+        """An entry with no local OAuth mode is refused."""
         resp = await client.post(
             "/api/marketplace/install",
             json={"server_id": "slack", "backend_id": "slack-uuid"},
         )
-        # Should return requires_oauth=True with oauth_url
-        assert resp.status_code == 200
-        data = resp.json()
-        assert data["ok"] is True
-        assert data["requires_oauth"] is True
-        assert "oauth_url" in data
-        assert data["oauth_url"] == "https://oauth.example.com/authorize"
+        assert resp.status_code == 400
+        assert "local OAuth" in resp.json()["error"]
 
-        # Server should NOT be installed yet (happens after OAuth callback)
         record = await state.store.get_server("slack")
         assert record is None
 
