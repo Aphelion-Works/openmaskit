@@ -30,19 +30,8 @@ jobs:
       - name: Install dependencies
         run: uv sync --frozen
 
-      - name: Fetch the pinned design revision
-        env:
-          DESIGN_TOKEN: ${{ github.token }}
-        run: |
-          revision="$(python3 -c 'import json; print(json.load(open("design-system.lock.json"))["revision"])')"
-          git config --global url."https://x-access-token:${DESIGN_TOKEN}@github.com/Aphelion-Works/openmaskit-design-system.git".insteadOf "https://github.com/Aphelion-Works/openmaskit-design-system.git"
-          git clone --filter=blob:none --no-checkout https://github.com/Aphelion-Works/openmaskit-design-system.git .runtime/design-system
-          git -C .runtime/design-system fetch --depth 1 origin "$revision"
-          git -C .runtime/design-system checkout --detach FETCH_HEAD
       - name: Verify pinned shared design assets
-        env:
-          OPENMASKIT_DESIGN_SYSTEM_DIR: ${{ github.workspace }}/.runtime/design-system
-        run: python3 scripts/design_system.py --check-upstream
+        run: python3 scripts/design_system.py --check
 
       - name: Verify shared assets in the built Python distribution
         run: |
