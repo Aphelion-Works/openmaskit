@@ -121,10 +121,34 @@ def _default_source(env: Mapping[str, str]) -> CatalogSource:
     try:
         url = validate_catalog_url(raw)
     except ValueError:
-        url = DEFAULT_CATALOG_URL
+        url = _loopback_http_url(raw) or DEFAULT_CATALOG_URL
     source_id = "community" if url == DEFAULT_CATALOG_URL else "default"
     name = "Community" if source_id == "community" else "Catalog"
     return CatalogSource(source_id, name, url)
+
+
+def _loopback_http_url(value: str) -> str | None:
+    """Allow the local acceptance catalog. Saved catalog addresses stay https."""
+    parsed = urlsplit(str(value or "").strip())
+    host = (parsed.hostname or "").lower()
+    if (
+        parsed.scheme != "http"
+        or host not in {"127.0.0.1", "localhost", "::1"}
+        or parsed.username
+        or parsed.password
+        or parsed.query
+        or parsed.fragment
+        or ".." in parsed.path.split("/")
+    ):
+        return None
+    path = parsed.path.rstrip("/")
+    if host == "::1":
+        netloc = f"[::1]:{parsed.port}" if parsed.port else "[::1]"
+    else:
+        netloc = host
+        if parsed.port:
+            netloc = f"{netloc}:{parsed.port}"
+    return f"http://{netloc}{path}"
 
 
 def _read_catalog_file(path: Path) -> list[CatalogSource]:

@@ -126,6 +126,36 @@ def test_upstream_download_sends_a_token_only_to_the_pinned_host(monkeypatch):
     assert captured["timeout"] == 30
 
 
+def test_design_checkout_must_match_the_pinned_revision(tmp_path, monkeypatch):
+    checkout = tmp_path / "design"
+    files = {
+        "LICENSE": b"license",
+        "NOTICE": b"notice",
+        "TRADEMARKS.md": b"marks",
+        "web/tokens.css": b"tokens",
+        "web/components.css": b"components",
+        "web/tokens.resolved.json": b"{}",
+    }
+    for name, data in files.items():
+        path = checkout.joinpath(*name.split("/"))
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(data)
+    revision = "a" * 40
+
+    def fake_run(args, **_kwargs):
+        class Result:
+            returncode = 0
+            stdout = revision + "\n"
+
+        assert args[:3] == ["git", "-C", str(checkout)]
+        return Result()
+
+    monkeypatch.setattr(design.subprocess, "run", fake_run)
+    assert design.read_design_checkout(checkout, revision)["LICENSE"] == b"license"
+    with pytest.raises(ValueError, match="pinned revision"):
+        design.read_design_checkout(checkout, "b" * 40)
+
+
 def test_upstream_check_uses_pinned_revision_and_detects_drift():
     lock, contents = fixture_lock()
 

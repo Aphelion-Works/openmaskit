@@ -7,6 +7,7 @@ import hashlib
 import json
 import os
 import re
+import subprocess
 import zipfile
 from pathlib import Path
 from urllib.error import HTTPError
@@ -103,8 +104,35 @@ def check(root=ROOT, upstream=False):
     }
     verify(lock, contents)
     if upstream:
-        verify(lock, {name: download(lock["revision"], name) for name in FILES})
+        directory = os.environ.get("OPENMASKIT_DESIGN_SYSTEM_DIR", "").strip()
+        upstream_contents = (
+            read_design_checkout(Path(directory), lock["revision"])
+            if directory
+            else {name: download(lock["revision"], name) for name in FILES}
+        )
+        verify(lock, upstream_contents)
     return lock
+
+
+def read_design_checkout(directory, revision):
+    """Read the fixed asset list from a checkout of the pinned revision."""
+    if directory.is_symlink() or not directory.is_dir():
+        raise ValueError("The design checkout must be a directory")
+    head = subprocess.run(
+        ["git", "-C", str(directory), "rev-parse", "HEAD"],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    if head.returncode != 0 or head.stdout.strip() != revision:
+        raise ValueError("The design checkout is not the pinned revision")
+    contents = {}
+    for name in FILES:
+        path = directory.joinpath(*name.split("/"))
+        if path.is_symlink() or not path.is_file() or directory not in path.parents:
+            raise ValueError(f"Design checkout is missing {name}")
+        contents[name] = path.read_bytes()
+    return contents
 
 
 def update(revision, root=ROOT):

@@ -25,8 +25,8 @@ python3 scripts/design_system.py --update EXACT_40_CHARACTER_COMMIT
 
 The updater downloads only the fixed asset list, validates every checksum before
 writing, and retains Apache-2.0 attribution beside the CSS. The source stays
-private because Companion uses its native package. The upstream check reads it
-with `OPENMASKIT_DESIGN_SYSTEM_TOKEN`. Commit the new lock
+private because Companion uses its native package. CI checks a checkout of
+the pinned revision. Commit the new lock
 and assets together, run unit/startup/browser acceptance, and coordinate the
 same design revision in Companion. A future light theme must be adopted by both
 applications before exposing theme settings.
