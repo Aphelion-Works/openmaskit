@@ -6,6 +6,9 @@ on:
   push:
     branches: [main]
 
+permissions:
+  contents: read
+
 concurrency:
   group: test-${{ github.ref }}
   cancel-in-progress: true
@@ -28,6 +31,8 @@ jobs:
         run: uv sync --frozen
 
       - name: Verify pinned shared design assets
+        env:
+          OPENMASKIT_DESIGN_SYSTEM_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: python3 scripts/design_system.py --check-upstream
 
       - name: Verify shared assets in the built Python distribution
@@ -66,7 +71,8 @@ jobs:
 
   acceptance:
     name: Browser and real Presidio acceptance
-    runs-on: ubuntu-latest
+    # Playwright 1.60 has no Chromium build for ubuntu-latest once that image is 26.04.
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
     services:
       postgres:

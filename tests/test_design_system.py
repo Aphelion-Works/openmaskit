@@ -93,6 +93,37 @@ def test_update_verifies_all_files_before_writing(tmp_path):
     assert design.check(tmp_path) == lock
 
 
+def test_upstream_download_sends_a_token_only_to_the_pinned_host(monkeypatch):
+    monkeypatch.setenv("OPENMASKIT_DESIGN_SYSTEM_TOKEN", "test-token")
+    captured = {}
+
+    class Response:
+        url = "https://raw.githubusercontent.com/ricardomartins-gravitee/openmaskit-design-system/rev/LICENSE"
+
+        def read(self, _limit):
+            return b"license"
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+    def fake_urlopen(request, timeout):
+        captured["url"] = request.full_url
+        captured["authorization"] = request.get_header("Authorization")
+        captured["timeout"] = timeout
+        return Response()
+
+    with patch.object(design, "urlopen", fake_urlopen):
+        assert design.download("a" * 40, "LICENSE") == b"license"
+    assert captured["authorization"] == "Bearer test-token"
+    assert captured["url"].startswith(
+        "https://raw.githubusercontent.com/ricardomartins-gravitee/openmaskit-design-system/"
+    )
+    assert captured["timeout"] == 30
+
+
 def test_upstream_check_uses_pinned_revision_and_detects_drift():
     lock, contents = fixture_lock()
 

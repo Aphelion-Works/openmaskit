@@ -5,10 +5,12 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
 import re
 import zipfile
 from pathlib import Path
-from urllib.request import urlopen
+from urllib.error import HTTPError
+from urllib.request import Request, urlopen
 
 ROOT = Path(__file__).resolve().parents[1]
 REPOSITORY = "ricardomartins-gravitee/openmaskit-design-system"
@@ -52,11 +54,19 @@ def validate_lock(lock):
 
 def download(revision, name):
     # Callers validate revision and use the fixed file list before any request.
+    # The source repository is private, so CI presents its own read token.
     url = f"https://raw.githubusercontent.com/{REPOSITORY}/{revision}/{name}"
-    with urlopen(url, timeout=30) as response:
-        if not response.url.startswith("https://raw.githubusercontent.com/"):
-            raise ValueError("Unexpected design-system download origin")
-        data = response.read(1024 * 1024 + 1)
+    headers = {"User-Agent": "openmaskit-design-pin"}
+    token = os.environ.get("OPENMASKIT_DESIGN_SYSTEM_TOKEN", "").strip()
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+    try:
+        with urlopen(Request(url, headers=headers), timeout=30) as response:
+            if not response.url.startswith("https://raw.githubusercontent.com/"):
+                raise ValueError("Unexpected design-system download origin")
+            data = response.read(1024 * 1024 + 1)
+    except HTTPError as exc:
+        raise ValueError("The pinned design revision could not be downloaded") from exc
     if len(data) > 1024 * 1024:
         raise ValueError("Design asset exceeds size limit")
     return data
