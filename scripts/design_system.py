@@ -54,7 +54,8 @@ def validate_lock(lock):
 
 def download(revision, name):
     # Callers validate revision and use the fixed file list before any request.
-    # The source repository is private, so CI presents its own read token.
+    # A private source rejects anonymous downloads, so a read token can be supplied.
+    # The token is sent only to the pinned raw host.
     url = f"https://raw.githubusercontent.com/{REPOSITORY}/{revision}/{name}"
     headers = {"User-Agent": "openmaskit-design-pin"}
     token = os.environ.get("OPENMASKIT_DESIGN_SYSTEM_TOKEN", "").strip()

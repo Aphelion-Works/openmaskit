@@ -18,13 +18,14 @@ updated. To verify or deliberately adopt a tested shared release:
 
 ```sh
 python3 scripts/design_system.py --check
-OPENMASKIT_DESIGN_SYSTEM_TOKEN=… python3 scripts/design_system.py --check-upstream
+python3 scripts/design_system.py --check-upstream
 python3 scripts/design_system.py --check-wheel path/to/built.whl
 python3 scripts/design_system.py --update EXACT_40_CHARACTER_COMMIT
 ```
 
 The updater downloads only the fixed asset list, validates every checksum before
-writing, and retains Apache-2.0 attribution beside the CSS. Commit the new lock
+writing, and retains Apache-2.0 attribution beside the CSS. The source repository
+is public, so the upstream check needs no token. Commit the new lock
 and assets together, run unit/startup/browser acceptance, and coordinate the
 same design revision in Companion. A future light theme must be adopted by both
 applications before exposing theme settings.
