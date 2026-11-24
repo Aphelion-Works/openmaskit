@@ -52,7 +52,10 @@ def validate(candidate, env):
             result = subprocess.run(command, cwd=candidate, env=env, stdout=log,
                                     stderr=subprocess.STDOUT, text=True)
         if result.returncode:
-            raise RuntimeError(f'Candidate check {index} failed; see {log_path}')
+            tail = log_path.read_text(errors='replace')[-4000:]
+            raise RuntimeError(
+                f'Candidate check {index} failed; see {log_path}\n{tail}'
+            )
 
 
 def maintain(args):
