@@ -40,4 +40,4 @@ jobs:
           path: |
             .runtime/maintenance-status.json
             .runtime/candidate-check-*.log
-          retention-days: 14
+          retention-days: 7

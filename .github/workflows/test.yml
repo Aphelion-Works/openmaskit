@@ -62,7 +62,7 @@ jobs:
             .runtime/backend-coverage.json
             .runtime/backend-coverage/
           if-no-files-found: error
-          retention-days: 14
+          retention-days: 7
 
       - name: Check privacy across real startup and MCP calls
         run: uv run --frozen python scripts/privacy_smoke.py
@@ -120,4 +120,4 @@ jobs:
             .runtime/acceptance.xml
             .runtime/browser-results/
             .runtime/acceptance/**/privacy-mobile.png
-          retention-days: 14
+          retention-days: 7
